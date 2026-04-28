@@ -1,0 +1,263 @@
+library(haven)
+library(TraMineR)
+library(cluster)
+library(dplyr)
+library(nnet)
+library(sjPlot)
+library(survival)
+library(survminer)
+
+eder17<- read_stata("EDER2017_HV (etiquetas).dta")
+
+eder17$prefijo <- substr(eder17$folioviv, 1, 2)
+eder17 <- eder17[eder17$prefijo == "09", ]
+eder17 <- eder17[eder17$anio_nac <= 1982, ]
+
+EDER2017 <- eder17[,c("key_Per","edad_retro","edad_act","ID",
+                      "anio_nac","anio_aprob","geo_eder","sexo","iosterciles",
+                      "nivel_esc","niv_aprob","edad_dejar","scian","edo_civil1","hij_vid_1")]
+
+### Covariables
+
+EDER2017$sexo <- factor(EDER2017$sexo,
+                      levels = c(1,2),
+                      labels = c("Hombres","Mujeres"))
+
+EDER2017$Generacion <- NA
+EDER2017$Generacion[EDER2017$anio_nac >= 1962 & EDER2017$anio_nac <= 1966] <- "1962-1966"
+EDER2017$Generacion[EDER2017$anio_nac >= 1968 & EDER2017$anio_nac <= 1972] <- "1968-1972"
+EDER2017$Generacion[EDER2017$anio_nac >= 1978 & EDER2017$anio_nac <= 1982] <- "1978-1982"
+
+EDER2017$Escolaridad <- NA
+EDER2017$Escolaridad[EDER2017$niv_aprob %in% c(0, 2, 3)] <- "Baja"
+EDER2017$Escolaridad[EDER2017$niv_aprob %in% c(4, 6, 7, 8)] <- "Media"
+EDER2017$Escolaridad[EDER2017$niv_aprob %in% c(10, 11, 12)] <- "Alta"
+
+EDER2017$Entidad.Nacimiento <- ifelse(
+  substr(eder17$geo_eder, 4, 5) == "09",
+  "CDMX",
+  "Fuera.CDMX")
+
+### Deserción
+
+EDER2017$desercion_1 <- ifelse ((EDER2017$nivel_esc != 0  & EDER2017$nivel_esc !=  1 & EDER2017$nivel_esc !=  2 &
+                                   EDER2017$nivel_esc != 3  & EDER2017$nivel_esc !=  4 & EDER2017$nivel_esc !=  6 &
+                                   EDER2017$nivel_esc != 7  & EDER2017$nivel_esc !=  8 & EDER2017$nivel_esc != 10 &
+                                   EDER2017$nivel_esc != 11 & EDER2017$nivel_esc != 12 & EDER2017$nivel_esc != 13),1,0)
+
+EDER2017[order(EDER2017$key_Per, EDER2017$edad_retro),]
+
+EDER2017 <- EDER2017 %>%
+  group_by(key_Per) %>%
+  add_tally(wt=desercion_1, name="censura_desercion")
+
+EDER2017$desercion_2 <- ave(EDER2017$desercion_1, EDER2017$key_Per, FUN=cumsum)
+EDER2017$desercion_3 <- ifelse((EDER2017$desercion_1 == 1 & EDER2017$desercion_2 == 1),EDER2017$edad_retro,0)
+
+EDER2017 <- EDER2017 %>%
+  group_by(key_Per) %>%
+  add_tally(wt=desercion_3)
+
+EDER2017$edad_desercion <- ifelse((EDER2017$censura_desercion !=0),EDER2017$n,EDER2017$edad_act)
+
+### Empleo
+
+EDER2017$empleo_1 <- ifelse ((EDER2017$scian == "0000"),0,1)
+
+EDER2017 <- EDER2017 %>%
+  group_by(key_Per) %>%
+  add_tally(wt=empleo_1, name="censura_empleo")
+
+EDER2017$empleo_2 <- ave(EDER2017$empleo_1, EDER2017$key_Per, FUN=cumsum)
+EDER2017$empleo_3 <- ifelse((EDER2017$empleo_1 == 1 & EDER2017$empleo_2 == 1),EDER2017$edad_retro,0)
+
+EDER2017 <- EDER2017 %>%
+  group_by(key_Per) %>%
+  add_tally(wt=empleo_3)
+
+EDER2017$edad_empleo <- ifelse((EDER2017$censura_empleo !=0),EDER2017$nn,EDER2017$edad_act)
+
+### Unión
+
+EDER2017$union_1 <- ifelse ((EDER2017$edo_civil1 != 0 & EDER2017$edo_civil1 != 6 & EDER2017$edo_civil1 != 7 &
+                               EDER2017$edo_civil1 != 8 & EDER2017$edo_civil1 != 10 & EDER2017$edo_civil1 != 12 &
+                               EDER2017$edo_civil1 != 14 & EDER2017$edo_civil1 != 17 & EDER2017$edo_civil1 != 20 &
+                               EDER2017$edo_civil1 != 30 & EDER2017$edo_civil1 != 40 & EDER2017$edo_civil1 != 60 &
+                               EDER2017$edo_civil1 != 70 & EDER2017$edo_civil1 != 80 & EDER2017$edo_civil1 != 126),1,0)
+
+EDER2017 <- EDER2017 %>%
+  group_by(key_Per) %>%
+  add_tally(wt=union_1, name="censura_union")
+
+EDER2017$union_2 <- ave(EDER2017$union_1, EDER2017$key_Per, FUN=cumsum)
+EDER2017$union_3 <- ifelse((EDER2017$union_1 == 1 & EDER2017$union_2 == 1),EDER2017$edad_retro,0)
+
+EDER2017 <- EDER2017 %>%
+  group_by(key_Per) %>%
+  add_tally(wt=union_3)
+
+EDER2017$edad_prim_union <- ifelse((EDER2017$censura_union !=0),EDER2017$nnn,EDER2017$edad_act)
+
+### Primer hijo
+
+EDER2017$primhij_1 <- ifelse ((EDER2017$hij_vid_1 !=1 & EDER2017$hij_vid_1 !=2 & EDER2017$hij_vid_1 !=4 &
+                                 EDER2017$hij_vid_1 !=5 & EDER2017$hij_vid_1 !=6),1,0)
+EDER2017 <- EDER2017 %>%
+  group_by(key_Per) %>%
+  add_tally(wt=primhij_1, name="censura_hijo")
+
+EDER2017$primhij_2 <- ave(EDER2017$primhij_1, EDER2017$key_Per, FUN=cumsum)
+EDER2017$primhij_3 <- ifelse((EDER2017$primhij_1 == 1 & EDER2017$primhij_2 == 1),EDER2017$edad_retro,0)
+
+EDER2017 <- EDER2017 %>%
+  group_by(key_Per) %>%
+  add_tally(wt=primhij_3)
+
+EDER2017$edad_prim_hijo <- ifelse((EDER2017$censura_hijo==1),EDER2017$nnnn,EDER2017$edad_act)
+
+### Consolidada
+
+EDER2017 <- EDER2017[!duplicated(EDER2017$ID),]
+
+EDER2017_tram <- EDER2017[,c("key_Per","edad_retro","edad_act","ID",
+                             "anio_nac","anio_aprob","Entidad.Nacimiento","sexo","iosterciles","Generacion","Escolaridad",
+                             "edad_dejar","edad_desercion","edad_empleo","edad_prim_union","edad_prim_hijo",
+                             "censura_desercion","censura_empleo","censura_union","censura_hijo")]
+
+
+EDER2017_tram$edad_desercion[EDER2017_tram$censura_desercion == 0] <- NA
+EDER2017_tram$edad_empleo[EDER2017_tram$censura_empleo == 0] <- NA
+EDER2017_tram$edad_prim_union[EDER2017_tram$censura_union == 0] <- NA
+EDER2017_tram$edad_prim_hijo[EDER2017_tram$censura_hijo == 0] <- NA
+
+edades <- 0:max(EDER2017_tram$edad_act)
+
+########################### Análisis de secuencias
+
+crear_seq_simple <- function(dejar, deser, empleo, union, hijo){
+  
+  seq <- rep("0", length(edades))
+  
+  eventos <- c(
+    Independencia = dejar,
+    Desercion.Escolar = deser,
+    Primer.Empleo = empleo,
+    Primera.Union = union,
+    Primer.Hijo = hijo
+  )
+  
+  eventos <- eventos[!is.na(eventos)]
+  
+  if(length(eventos)==0) return(seq)
+  
+  orden <- sort(eventos)
+  
+  for(i in seq_along(orden)){
+    letra <- names(orden)[i]
+    seq[edades >= orden[i]] <- letra
+  }
+  
+  seq
+}
+
+seq_matrix <- t(mapply(
+  crear_seq_simple,
+  EDER2017_tram$edad_dejar,
+  EDER2017_tram$edad_desercion,
+  EDER2017_tram$edad_empleo,
+  EDER2017_tram$edad_prim_union,
+  EDER2017_tram$edad_prim_hijo
+))
+
+seq_df <- as.data.frame(seq_matrix)
+colnames(seq_df) <- paste0(edades)
+seq_df <- seq_df[, 1:31]
+seq_df <- cbind(EDER2017_tram[, c("ID", "sexo", "iosterciles","Generacion","Escolaridad","Entidad.Nacimiento","edad_act",
+                                  "edad_dejar","edad_desercion","edad_empleo","edad_prim_union","edad_prim_hijo",
+                                  "censura_desercion","censura_empleo","censura_union","censura_hijo")],seq_df)
+seq_df <- seq_df[!is.na(seq_df$iosterciles) & !is.na(seq_df$Generacion), ]
+
+seqobj <- seqdef(seq_df,17:47)
+seqIplot(seqobj, with.legend="right")
+seqfplot(seqobj, with.legend="right")
+seqdplot(seqobj, with.legend="right")
+seqdplot(seqobj,group=seq_df$Entidad.Nacimiento, with.legend="right")
+seqHtplot(seqobj)
+seqmsplot(seqobj, with.legend="right")
+
+#### Tipologías
+
+sm <- seqsubm(seqobj, method = "TRATE")
+dist <- seqdist(seqobj,method="OM",sm=sm, indel=1)
+
+clusterward1 <- agnes(dist, diss=TRUE, method="ward")
+plot(clusterward1,which.plot=2)
+cls.3 <- cutree(clusterward1,k=3)
+cls.3 <- factor(cls.3,labels=paste("Tipologia",1:3))
+
+seqdplot(seqobj,group=cls.3, with.legend="right")
+seqrplot(seqobj,diss=dist,group=cls.3)
+
+#### Modelo Mutinomial
+
+base_modelos <- cbind(seq_df, cls.3)
+base_modelos$cls.3 <- factor(base_modelos$cls.3)
+base_modelos$iosterciles <- factor(base_modelos$iosterciles)
+
+modelo <- multinom(
+  cls.3 ~ sexo +
+    iosterciles +
+    Generacion +
+    Escolaridad +
+    Entidad.Nacimiento,
+  data = base_modelos
+)
+
+summary(modelo)
+tab_model(modelo, transform = "exp")
+
+#### Modelo de Supervivencia
+
+base_modelos$censura_desercion <- ifelse(base_modelos$censura_desercion >= 1,1,0)
+base_modelos$censura_union <- ifelse(base_modelos$censura_union >= 1,1,0)
+base_modelos$censura_empleo <- ifelse(base_modelos$censura_empleo >= 1,1,0)
+base_modelos$censura_hijo <- ifelse(base_modelos$censura_hijo >= 1,1,0)
+
+base_modelos$edad_dejar <- ifelse(is.na(base_modelos$edad_dejar),base_modelos$edad_act,base_modelos$edad_dejar)
+base_modelos$edad_desercion <- ifelse(is.na(base_modelos$edad_desercion),base_modelos$edad_act,base_modelos$edad_desercion)
+base_modelos$edad_empleo <- ifelse(is.na(base_modelos$edad_empleo),base_modelos$edad_act,base_modelos$edad_empleo)
+base_modelos$edad_prim_union <- ifelse(is.na(base_modelos$edad_prim_union),base_modelos$edad_act,base_modelos$edad_prim_union)
+base_modelos$edad_prim_hijo <- ifelse(is.na(base_modelos$edad_prim_hijo),base_modelos$edad_act,base_modelos$edad_prim_hijo)
+
+surv_obj <- Surv(
+  time  = base_modelos$edad_prim_union,
+  event = base_modelos$censura_union
+)
+
+km_fit <- survfit(
+  surv_obj ~ sexo,
+  data = base_modelos
+)
+
+ggsurvplot(
+  km_fit,
+  data = base_modelos,
+  risk.table = TRUE,     # tabla de riesgo
+  pval = TRUE,           # prueba log-rank
+  conf.int = TRUE,       # bandas de confianza
+  xlab = "Edad",
+  ylab = "Probabilidad de no haber iniciado unión",
+  legend.title = "Sexo",
+  legend.labs = c("Hombres", "Mujeres")
+)
+
+modelo_weibull <- survreg(
+  Surv(edad_prim_union, censura_union) ~ 
+    sexo + iosterciles + Generacion + Escolaridad + Entidad.Nacimiento + cls.3,
+  data = base_modelos,
+  dist = "weibull"
+)
+
+summary(modelo_weibull)
+tab_model(modelo_weibull)
+
