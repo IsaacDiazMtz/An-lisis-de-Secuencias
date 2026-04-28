@@ -6,8 +6,9 @@ library(nnet)
 library(sjPlot)
 library(survival)
 library(survminer)
+library(ggplot2)
 
-eder17<- read_stata("EDER2017_HV (etiquetas).dta")
+eder17<- read_stata("EDER2017_HV (etiquetas)_junio21")
 
 eder17$prefijo <- substr(eder17$folioviv, 1, 2)
 eder17 <- eder17[eder17$prefijo == "09", ]
